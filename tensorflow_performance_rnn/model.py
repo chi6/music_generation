@@ -2,23 +2,25 @@ import tensorflow as tf
 import numpy as np
 import time
 import os
+import tensorflow.contrib as contr
 
 
-
-class CharRNN:
-    def __init__(self, event_dim, control_dim, num_seqs=64, num_steps=50,
-                 lstm_size=128, num_layers=2, learning_rate=0.001,
-                 grad_clip=5, sampling=False, train_keep_prob=0.5, use_embedding=False, embedding_size=128):
+class Performance_RNN:
+    def __init__(self, event_dim, control_dim, control = True, num_seqs=64, num_steps=50,
+                 lstm_size=512, num_layers=2, learning_rate=0.001, greedy = 1.0,
+                 grad_clip=5, sampling=False, train_keep_prob=0.5, use_embedding=False, embedding_size=128, temperature = 1.0):
         if sampling is True:
             num_seqs, num_steps = 1, 1
         else:
             num_seqs, num_steps = num_seqs, num_steps
 
+        self.control = control #if use control
+
         self.event_dim = event_dim
         self.control_dim = control_dim
 
         self.num_seqs = num_seqs
-        self.num_steps = num_steps
+        self.num_steps = num_steps -1
         self.lstm_size = lstm_size
         self.num_layers = num_layers
         self.learning_rate = learning_rate
@@ -26,6 +28,9 @@ class CharRNN:
         self.train_keep_prob = train_keep_prob
         self.use_embedding = use_embedding
         self.embedding_size = embedding_size
+
+        self.greedy =greedy
+        self.temperature = temperature
 
         tf.reset_default_graph()
         self.build_inputs()
@@ -38,17 +43,33 @@ class CharRNN:
     def build_inputs(self):
         with tf.name_scope('inputs'):
             self.event_inputs = tf.placeholder(tf.int32, shape=(
-                self.num_seqs, self.num_steps), name='event_inputs')
+                None, self.num_steps), name='event_inputs')
             self.control_inputs = tf.placeholder(tf.float32, shape=(
-                self.num_seqs, self.num_steps,self.control_dim), name='control_inputs')
-            self.targets = tf.placeholder(tf.int32, shape=(
-                self.num_seqs, self.num_steps), name='targets')
+                None, self.num_steps,self.control_dim), name='control_inputs')
+            self.event_targets = tf.placeholder(tf.int32, shape=(
+                None, self.num_steps), name='event_targets')
+
             self.keep_prob = tf.placeholder(tf.float32, name='keep_prob')
 
             with tf.device("/cpu:0"):
                 embedding = tf.get_variable('embedding', [self.event_dim, self.event_dim])
-                self.lstm_inputs = tf.nn.embedding_lookup(embedding, self.event_inputs)
-            self.inputs = tf.concat((self.lstm_inputs, self.control_inputs),axis=2)
+                self.embedding_state = tf.nn.embedding_lookup(embedding, self.event_inputs)
+            if self.control is False:
+                default = tf.ones([self.num_seqs, self.num_steps, 1])
+                self.control_inputs = tf.zeros([self.num_seqs, self.num_steps , self.control_dim])
+            else:
+                default = tf.zeros([self.num_seqs, self.num_steps, 1])
+
+            self.inputs = tf.concat((self.embedding_state, default,self.control_inputs),axis=2)
+            self.lstm_inputs = contr.layers.fully_connected(self.inputs, self.lstm_size, activation_fn= tf.nn.leaky_relu)
+
+    def _sample_event(self, output, greedy=True, temperature=1.0):
+        if greedy:
+            return tf.argmax(output,axis=-1)
+        else:
+            output = output / temperature
+            probs = tf.nn.softmax(output)
+            return tf.distributions.Categorical(probs = probs).sample(self.event_dim)
 
     def build_lstm(self):
         # 创建单个cell并堆叠多层
@@ -64,7 +85,7 @@ class CharRNN:
             self.initial_state = cell.zero_state(self.num_seqs, tf.float32)
 
             # 通过dynamic_rnn对cell展开时间维度
-            self.lstm_outputs, self.final_state = tf.nn.dynamic_rnn(cell, self.inputs, initial_state=self.initial_state)
+            self.lstm_outputs, self.final_state = tf.nn.dynamic_rnn(cell, self.lstm_inputs, initial_state=self.initial_state)
 
             # 通过lstm_outputs得到概率
             seq_output = tf.concat(self.lstm_outputs, 1)
@@ -75,13 +96,16 @@ class CharRNN:
                 softmax_b = tf.Variable(tf.zeros(self.event_dim))
 
             self.logits = tf.matmul(x, softmax_w) + softmax_b
-            self.proba_prediction = tf.nn.softmax(self.logits, name='predictions')
+
+            use_greedy = np.random.random() < self.greedy
+
+            self.event_output = self._sample_event(self.logits, use_greedy, self.temperature)
 
     def build_loss(self):
         with tf.name_scope('loss'):
-            y_one_hot = tf.one_hot(self.targets, self.event_dim)
+            y_one_hot = tf.one_hot(self.event_targets, self.event_dim)
             y_reshaped = tf.reshape(y_one_hot, self.logits.get_shape())
-            loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits, labels=y_reshaped)
+            loss = tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.logits, labels=y_reshaped)
             self.loss = tf.reduce_mean(loss)
 
     def build_optimizer(self):
@@ -97,14 +121,14 @@ class CharRNN:
             # Train network
             step = 0
             new_state = sess.run(self.initial_state)
-            for x, y in batch_generator:
+            for event, control in batch_generator:
+
                 step += 1
                 start = time.time()
-                target = np.zeros_like(x)
-                target[:, :-1], target[:, -1] = x[:, 1:], x[:, 0]
-                feed = {self.event_inputs: x,
-                        self.control_inputs: y,
-                        self.targets: target,
+                target = event[:, 1:]
+                feed = {self.event_inputs: event[:,0:-1],
+                        self.control_inputs: control[:,0:-1,:],
+                        self.event_targets: target,
                         self.keep_prob: self.train_keep_prob,
                         self.initial_state: new_state}
                 batch_loss, new_state, _ = sess.run([self.loss,

@@ -1,9 +1,9 @@
 import tensorflow as tf
 from data import Dataset
-from tensorflow_performance_rnn.model import CharRNN
+from tensorflow_performance_rnn.model import Performance_RNN
 import os
 import codecs
-from sequence import NoteSeq, EventSeq, ControlSeq
+from tensorflow_performance_rnn.sequence import NoteSeq, EventSeq, ControlSeq
 
 FLAGS = tf.flags.FLAGS
 
@@ -16,7 +16,7 @@ tf.flags.DEFINE_boolean('use_embedding', False, 'whether to use embedding')
 tf.flags.DEFINE_integer('embedding_size', 128, 'size of embedding')
 tf.flags.DEFINE_float('learning_rate', 0.001, 'learning_rate')
 tf.flags.DEFINE_float('train_keep_prob', 0.5, 'dropout rate during training')
-tf.flags.DEFINE_string('data_path', '../dataset/processed/classical', 'data_path')
+tf.flags.DEFINE_string('data_path', '../dataset/processed/classical_piano', 'data_path')
 tf.flags.DEFINE_integer('max_steps', 100000, 'max steps to train')
 tf.flags.DEFINE_integer('save_every_n', 1000, 'save the model every n steps')
 tf.flags.DEFINE_integer('log_every_n', 10, 'log to the screen every n steps')
@@ -32,14 +32,14 @@ def main(_):
     model_path = os.path.join('./model/', FLAGS.name)
     if os.path.exists(model_path) is False:
         os.makedirs(model_path)
-    #if os.path.isdir(model_path):
-    #    checkpoint_path =\
-    #        tf.train.latest_checkpoint(model_path)
+    if os.path.isdir(model_path):
+        checkpoint_path =\
+            tf.train.latest_checkpoint(model_path)
 
     dataset = load_dataset()
     batch_gen = dataset.batches(FLAGS.num_seqs, FLAGS.num_steps, 10)
-    print(EventSeq.dim())
-    model = CharRNN(EventSeq.dim(),ControlSeq.dim(),
+    print(batch_gen.__next__()[1].shape)
+    model = Performance_RNN(EventSeq.dim(),ControlSeq.dim(),
                     num_seqs=FLAGS.num_seqs,
                     num_steps=FLAGS.num_steps,
                     lstm_size=FLAGS.lstm_size,
