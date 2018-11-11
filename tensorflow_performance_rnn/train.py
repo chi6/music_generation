@@ -50,7 +50,7 @@ def main(_):
                     embedding_size=FLAGS.embedding_size
                     )
     model.sess.run(tf.global_variables_initializer())
-    model.load(checkpoint_path)
+    #model.load(checkpoint_path)
 
 
     model.train(batch_gen,

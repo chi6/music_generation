@@ -7,12 +7,12 @@ import tensorflow.contrib as contr
 
 class Performance_RNN:
     def __init__(self, event_dim, control_dim, control = True, num_seqs=64, num_steps=50,
-                 lstm_size=512, num_layers=2, learning_rate=0.001, greedy = 1.0,
+                 lstm_size=512, num_layers=2, learning_rate=0.001, greedy = 0.9,
                  grad_clip=5, sampling=False, train_keep_prob=0.5, use_embedding=False, embedding_size=128, temperature = 1.0):
         if sampling is True:
             num_seqs, num_steps = 1, 1
         else:
-            num_seqs, num_steps = num_seqs-1, num_steps-1
+            num_seqs, num_steps = num_seqs, 1
 
         self.control = control #if use control
 
@@ -92,7 +92,7 @@ class Performance_RNN:
             # 通过lstm_outputs得到概率
             seq_output = tf.concat(self.lstm_outputs, 1)
             x = tf.reshape(seq_output, [-1, self.lstm_size])
-
+            print(self.final_state)
             with tf.variable_scope('softmax'):
                 softmax_w = tf.Variable(tf.truncated_normal([self.lstm_size, self.event_dim], stddev=0.1))
                 softmax_b = tf.Variable(tf.zeros(self.event_dim))
@@ -100,12 +100,13 @@ class Performance_RNN:
             self.logits = tf.matmul(x, softmax_w) + softmax_b
 
             use_greedy = np.random.random() < self.greedy
-
+            self.prob = tf.argmax(self.logits,-1)
             self.event_output = self._sample_event(self.logits, use_greedy, self.temperature)
 
     def build_loss(self):
         with tf.name_scope('loss'):
             y_one_hot = tf.one_hot(self.event_targets, self.event_dim)
+
             y_reshaped = tf.reshape(y_one_hot, self.logits.get_shape())
             loss = tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.logits, labels=y_reshaped)
             self.loss = tf.reduce_mean(loss)
@@ -121,35 +122,37 @@ class Performance_RNN:
         with self.sess as sess:
 
             # Train network
-            step = 0
+            iter = 0
             new_state = sess.run(self.initial_state)
             for note_information in batch_generator:
 
                 event , control = note_information
-                step += 1
                 start = time.time()
-                target = event[:, 1:]
-                feed = {self.event_inputs: event[:,0:-1],
-                        self.control_inputs: control[:,0:-1,:],
-                        self.event_targets: target,
-                        self.keep_prob: self.train_keep_prob,
-                        self.initial_state: new_state}
-                batch_loss, new_state, _ = sess.run([self.loss,
-                                                     self.final_state,
-                                                     self.optimizer],
-                                                    feed_dict=feed)
+                next_event = event[:,0]
 
+                for step in range(event.shape[1]-1):
+                    feed = {self.event_inputs: np.asarray(next_event)[:,np.newaxis],
+                            self.control_inputs: control[:,step,:].reshape(-1,1,self.control_dim),
+                            self.event_targets: np.asarray(event[:,step+1])[:,np.newaxis],
+                            self.keep_prob: self.train_keep_prob,
+                            self.initial_state: new_state}
+                    batch_loss, new_state, next_event,_ = sess.run([self.loss,
+                                                         self.final_state,
+                                                         self.prob,
+                                                         self.optimizer],
+                                                        feed_dict=feed)
                 end = time.time()
+                iter += 1
                 # control the print lines
-                if step % log_every_n == 0:
-                    print('step: {}/{}... '.format(step, max_steps),
+                if iter % log_every_n == 0:
+                    print('iter: {}/{}... '.format(iter, max_steps),
                           'loss: {:.4f}... '.format(batch_loss),
                           '{:.4f} sec/batch'.format((end - start)))
-                if (step % save_every_n == 0):
-                    self.saver.save(sess, os.path.join(save_path, 'model'), global_step=step)
-                if step >= max_steps:
+                if (iter % save_every_n == 0):
+                    self.saver.save(sess, os.path.join(save_path, 'model'), global_step=iter)
+                if iter >= max_steps:
                     break
-            self.saver.save(sess, os.path.join(save_path, 'model'), global_step=step)
+            self.saver.save(sess, os.path.join(save_path, 'model'), global_step=iter)
 
     def sample(self, n_samples, prime_classical, control, vocab_size):
 
