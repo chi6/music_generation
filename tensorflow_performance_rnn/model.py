@@ -12,7 +12,7 @@ class Performance_RNN:
         if sampling is True:
             num_seqs, num_steps = 1, 1
         else:
-            num_seqs, num_steps = num_seqs, num_steps
+            num_seqs, num_steps = num_seqs-1, num_steps-1
 
         self.control = control #if use control
 
@@ -20,7 +20,7 @@ class Performance_RNN:
         self.control_dim = control_dim
 
         self.num_seqs = num_seqs
-        self.num_steps = num_steps -1
+        self.num_steps = num_steps
         self.lstm_size = lstm_size
         self.num_layers = num_layers
         self.learning_rate = learning_rate
@@ -41,7 +41,9 @@ class Performance_RNN:
         self.sess = tf.Session()
 
     def build_inputs(self):
+
         with tf.name_scope('inputs'):
+
             self.event_inputs = tf.placeholder(tf.int32, shape=(
                 None, self.num_steps), name='event_inputs')
             self.control_inputs = tf.placeholder(tf.float32, shape=(
@@ -63,7 +65,7 @@ class Performance_RNN:
             self.inputs = tf.concat((self.embedding_state, default,self.control_inputs),axis=2)
             self.lstm_inputs = contr.layers.fully_connected(self.inputs, self.lstm_size, activation_fn= tf.nn.leaky_relu)
 
-    def _sample_event(self, output, greedy=True, temperature=1.0):
+    def _sample_event(self, output, greedy=True, temperature=0.7):
         if greedy:
             return tf.argmax(output,axis=-1)
         else:
@@ -121,8 +123,9 @@ class Performance_RNN:
             # Train network
             step = 0
             new_state = sess.run(self.initial_state)
-            for event, control in batch_generator:
+            for note_information in batch_generator:
 
+                event , control = note_information
                 step += 1
                 start = time.time()
                 target = event[:, 1:]
@@ -148,7 +151,7 @@ class Performance_RNN:
                     break
             self.saver.save(sess, os.path.join(save_path, 'model'), global_step=step)
 
-    def sample(self, n_samples, control, vocab_size):
+    def sample(self, n_samples, prime_classical, control, vocab_size):
 
         def pick_top_n(preds, vocab_size, top_n=50):
             p = np.squeeze(preds)
@@ -162,35 +165,40 @@ class Performance_RNN:
                 c = np.argmax(preds)
             return c
 
-        prime = np.random.choice(self.event_dim,size=1)[0]
-        samples = [prime]
+        prime = prime_classical
+        samples = []
         sess = self.sess
         new_state = sess.run(self.initial_state)
         preds = np.ones((vocab_size, ))  # for prime=[]
 
+        for i in range(len(prime)):
+            feed = {self.event_inputs: [[prime[i]]],
+                    self.control_inputs: [control[i]],
+                    self.keep_prob: 1.,
+                    self.initial_state: new_state}
+            preds, new_state = sess.run([self.event_output, self.final_state],
+                                        feed_dict=feed)
 
-        feed = {self.event_inputs: [[prime]],
-                self.control_inputs: [[control[0]]],
-                self.keep_prob: 1.,
-                self.initial_state: new_state}
-        preds, new_state = sess.run([self.proba_prediction, self.final_state],
-                                    feed_dict=feed)
-
-        c = pick_top_n(preds, vocab_size)
-        # 添加字符到samples中
-        samples.append(c)
-
+            c = preds
+            # 添加字符到samples中
+            samples.append(prime[i])
+        control = np.repeat(control,n_samples,0)
+        print(control.shape)
         # 不断生成字符，直到达到指定数目
         for i in range(1, n_samples):
 
-            feed = {self.event_inputs: [[c]],
-                    self.control_inputs: [[control[i]]],
+            feed = {self.event_inputs: [c],
+                    self.control_inputs: [control[i]],
                     self.keep_prob: 1.,
                     self.initial_state: new_state}
-            preds, new_state = sess.run([self.proba_prediction, self.final_state],
+            preds, new_state = sess.run([self.event_output, self.final_state],
                                         feed_dict=feed)
 
-            c = pick_top_n(preds, vocab_size)
+            #c = pick_top_n(preds, vocab_size)
+            if np.random.uniform() < 0.98:
+                c = preds
+            else:
+                c = np.asarray([np.random.randint(0,240)])
             samples.append(c)
 
         return np.array(samples)

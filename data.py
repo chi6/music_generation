@@ -4,7 +4,7 @@ import itertools, os
 import numpy as np
 from progress.bar import Bar
 
-import config
+
 import utils
 from sequence import EventSeq, ControlSeq
 
@@ -46,8 +46,8 @@ class Dataset:
 
                 n += 1
                 if n == batch_size:
-                    yield (np.stack(eventseq_batch, axis=1).transpose())
-                           #np.stack(controlseq_batch, axis=1))#.transpose([1,0,2]))
+                    yield (np.stack(eventseq_batch, axis=1).transpose(),
+                            np.stack(controlseq_batch, axis=1).transpose([1,0,2]))
                     eventseq_batch.clear()
                     controlseq_batch.clear()
                     n = 0

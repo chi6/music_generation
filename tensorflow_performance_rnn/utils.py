@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from sequence import EventSeq, ControlSeq
+from tensorflow_performance_rnn.sequence import EventSeq, ControlSeq
 
 
 def find_files_by_extensions(root, exts=[]):
@@ -58,8 +58,8 @@ def transposition(events, controls, offset=0):
 
     return events, controls
 
-def dict2params(d, f=','):
-    return f.join(f'{k}={v}' for k, v in d.items())
+#def dict2params(d, f=','):
+#    return f.join(f'{k}={v}' for k, v in d.items())
 
 def params2dict(p, f=',', e='='):
     d = {}
